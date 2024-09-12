@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"fmt"
 	"log"
 	"os"
 
@@ -17,9 +20,28 @@ func main() {
 	//   - with RSA key
 	// crypto11.GenerateRSAKeyPairOnSlot
 	//   - I don't think we actually call this when using an HSM?
-	conf := crypto11.PKCS11Config {
+	// also look into whether we should set log_directory and other options
+	// logs go to stdout if not log is specified which might be fine?
+	conf := crypto11.PKCS11Config{
 		Path: os.Args[1],
+		// This token label must match up with the `label` set in the kmsp11 config
+		// for a given key.
+		// In Autograph, this means either duplicating this label in k8s + autograph
+		// config, or finding some way for autograph to pull it at runtime.
+		// An alternative would be to only set the infra bits in k8s (as env vars)
+		// and then have autograph generate and write the kmsp11 config at runtime
+		// which would combine the stuff coming from the env with the stuff (like label)
+		// coming from the config
+		// in GCP terms, this token is a "key ring", and we would expect the token label to be something like:
+		// projects/bhearsum-test/locations/northamerica-northeast2/keyRings/bhearsum-crypto11-test
+		TokenLabel: os.Args[2],
 	}
+
+	err := os.Setenv("KMS_PKCS11_CONFIG", os.Args[3])
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	ctx, err := crypto11.Configure(&conf)
 	if err != nil {
 		log.Fatal(err)
@@ -27,23 +49,55 @@ func main() {
 	if ctx != nil {
 	}
 
-	switch os.Args[2] {
-		// all of the different things we need to test
-		case "generate-ecdsa":
-			testGenerateEcdsa(ctx)
-		case "rand-reader":
-			testRandReader(ctx)
-		case "find-keypair":
-			testFindKeyPair(ctx)
-		case "all":
-			testGenerateEcdsa(ctx)
-			testRandReader(ctx)
-			testFindKeyPair(ctx)
+	switch os.Args[4] {
+	// all of the different things we need to test
+	case "generate-ecdsa":
+		log.Print("Testing ECDSA generation key on HSM")
+		log.Print("***********************************")
+		priv, pub, err := testGenerateEcdsa(ctx)
+		if err != nil {
+			log.Printf("failed to generate ecdsa: %v", err)
+			break
+		}
+		log.Print("Succeeded!")
+		log.Printf("privkey is: %v", priv)
+		log.Printf("pubkey is: %v", pub)
+	case "rand-reader":
+		testRandReader(ctx)
+	case "find-keypair":
+		testFindKeyPair(ctx)
+	case "all":
+		testGenerateEcdsa(ctx)
+		testRandReader(ctx)
+		testFindKeyPair(ctx)
 	}
 }
 
-func testGenerateEcdsa(ctx *pkcs11.Ctx) error {
-	return nil
+func testGenerateEcdsa(ctx *pkcs11.Ctx) (*crypto11.PKCS11PrivateKeyECDSA, *ecdsa.PublicKey, error) {
+	// basically just https://github.com/mozilla-services/autograph/blob/657f45ca42b7b392378485dd4c731d02037c0c75/signer/signer.go#L422-L438
+	var slots []uint
+	slots, err := ctx.GetSlotList(true)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(slots) < 1 {
+		return nil, nil, fmt.Errorf("no usable slots")
+	}
+	keyNameBytes := []byte("test-ecdsa-key")
+	// welp, the google library doesn't seem to like what crypto11 does
+	// we end up with:
+	// I20240912 16:09:41.182875 132216886245184 logging.cc:185] returning 0xd1 from C_GenerateKeyPair due to status INVALID_ARGUMENT: at session.cc:535: this token does not accept public key attributes [type.googleapis.com/kmsp11.StatusDetails='CK_RV=0xd1']
+	// https://github.com/GoogleCloudPlatform/kms-integrations/issues/1 seems to
+	// be reporting the same thing
+	// google recommends https://github.com/sethvargo/go-gcpkms in that issue
+	priv, err := crypto11.GenerateECDSAKeyPairOnSlot(slots[0], keyNameBytes, keyNameBytes, elliptic.P384())
+	if err != nil {
+		return nil, nil, err
+	}
+	// slightly different than autograph code because `priv` is not bound as a generic
+	// crypto.PrivateKey here; it's already a PKCS11PrivateKeyECDSA
+	pub := priv.PubKey.(ecdsa.PublicKey)
+	return priv, &pub, nil
 }
 
 func testRandReader(ctx *pkcs11.Ctx) error {

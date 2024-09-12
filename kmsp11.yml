@@ -1,0 +1,4 @@
+---
+tokens:
+  - key_ring: projects/bhearsum-test/locations/northamerica-northeast2/keyRings/bhearsum-crypto11-test
+    label: "bhearsum-crypto11-test"
