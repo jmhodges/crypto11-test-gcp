@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 
 	"github.com/ThalesIgnite/crypto11"
 	"github.com/miekg/pkcs11"
+	"github.com/youtube/vitess/go/pools"
 )
 
 func main() {
@@ -63,6 +65,17 @@ func main() {
 		log.Print("Succeeded!")
 		log.Printf("privkey is: %v", priv)
 		log.Printf("pubkey is: %v", pub)
+	case "generate-ecdsa-bypassing-crypto11":
+		log.Print("Testing ECDSA generation key on HSM")
+		log.Print("***********************************")
+		priv, pub, err := testGenerateEcdsaBypassingCrypto11(ctx, conf)
+		if err != nil {
+			log.Printf("failed to generate ecdsa: %v", err)
+			break
+		}
+		log.Print("Succeeded!")
+		log.Printf("privkey is: %v", priv)
+		log.Printf("pubkey is: %v", pub)
 	case "rand-reader":
 		data, err := testRandReader(ctx)
 		if err != nil {
@@ -76,7 +89,7 @@ func main() {
 	case "find-keypair":
 		handle, err := testFindKeyPair(ctx, []byte(os.Args[5]))
 		if err != nil {
-			log.Printf("failed to find key pair: %v")
+			log.Printf("failed to find key pair: %v", err)
 			break
 		}
 		log.Print("Succeeded!")
@@ -109,6 +122,148 @@ func testGenerateEcdsa(ctx *pkcs11.Ctx) (*crypto11.PKCS11PrivateKeyECDSA, *ecdsa
 	// crypto.PrivateKey here; it's already a PKCS11PrivateKeyECDSA
 	pub := priv.PubKey.(ecdsa.PublicKey)
 	return priv, &pub, nil
+}
+
+// copied from crypto11:
+// https://github.com/ThalesGroup/crypto11/blob/c73933259cb60509d00f32306eea53d10f8e8f10/crypto11.go#L150
+type libCtx struct {
+	ctx *pkcs11.Ctx
+	cfg *crypto11.PKCS11Config
+
+	token *pkcs11.TokenInfo
+	slot  uint
+}
+
+// copied from crypto11:
+// https://github.com/ThalesGroup/crypto11/blob/c73933259cb60509d00f32306eea53d10f8e8f10/crypto11.go#L160C1-L174C2
+func findToken(instance libCtx, slots []uint, serial string, label string) (uint, *pkcs11.TokenInfo, error) {
+	for _, slot := range slots {
+		tokenInfo, err := instance.ctx.GetTokenInfo(slot)
+		if err != nil {
+			return 0, nil, err
+		}
+		if tokenInfo.SerialNumber == serial {
+			return slot, &tokenInfo, nil
+		}
+		if tokenInfo.Label == label {
+			return slot, &tokenInfo, nil
+		}
+	}
+	return 0, nil, crypto11.ErrTokenNotFound
+}
+
+type sessionPool struct {
+	m sync.RWMutexpool map[uint]*pools.Resour
+}
+
+func withSession(slot uint, f func(session *crypto11.PKCS11Session) error) error {
+	sessionPool := pool.Get(slot)
+	if sessionPool == nil {
+		return fmt.Errorf("crypto11: no session for slot %d", slot)
+	}
+
+	ctx := context.Background()
+	if instance.cfg.PoolWaitTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), instance.cfg.PoolWaitTimeout)
+		defer cancel()
+	}
+
+	session, err := sessionPool.Get(ctx)
+	if err != nil {
+		return err
+	}
+	defer sessionPool.Put(session)
+
+	s := session.(*PKCS11Session)
+	err = f(s)
+	if err != nil {
+		// if a request required login, then try to login
+		if perr, ok := err.(pkcs11.Error); ok && perr == pkcs11.CKR_USER_NOT_LOGGED_IN && instance.cfg.Pin != "" {
+			if err = s.Ctx.Login(s.Handle, pkcs11.CKU_USER, instance.cfg.Pin); err != nil {
+				return err
+			}
+			// retry after login
+			return f(s)
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+// Ensures that sessions are setup.
+func ensureSessions(ctx *libCtx, slot uint) error {
+	if err := setupSessions(ctx, slot); err != nil && err != errSlotBusy {
+		return err
+	}
+	return nil
+}
+
+// Create the session pool for a given slot if it does not exist
+// already.
+func setupSessions(c *libCtx, slot uint) error {
+	return pool.PutIfAbsent(slot, pools.NewResourcePool(
+		func() (pools.Resource, error) {
+			s, err := newSession(c.ctx, slot)
+			if err != nil {
+				return nil, err
+			}
+
+			if instance.token.Flags&pkcs11.CKF_LOGIN_REQUIRED != 0 && instance.cfg.Pin != "" {
+				// login required if a pool evict idle sessions or
+				// for the first connection in the pool (handled in lib conf)
+				if instance.cfg.IdleTimeout > 0 {
+					if err = loginToken(s); err != nil {
+						return nil, err
+					}
+				}
+			}
+
+			return s, nil
+		},
+		c.cfg.MaxSessions,
+		c.cfg.MaxSessions,
+		c.cfg.IdleTimeout,
+	))
+}
+func testGenerateEcdsaBypassingCrypto11(ctx *pkcs11.Ctx, conf crypto11.PKCS11Config) (*crypto11.PKCS11PrivateKeyECDSA, *ecdsa.PublicKey, error) {
+	// basically just https://github.com/mozilla-services/autograph/blob/657f45ca42b7b392378485dd4c731d02037c0c75/signer/signer.go#L422-L438
+	var slots []uint
+	slots, err := ctx.GetSlotList(true)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(slots) < 1 {
+		return nil, nil, fmt.Errorf("no usable slots")
+	}
+	keyNameBytes := []byte("test-ecdsa-key")
+
+	// TODO: test that using our own context interops OK with the one that crypto11 internally holds
+	// eg: do a series of operations both by hand and through crypto11 to make sure nothing
+	// breaks
+	// we need an `instance` object to which is just a Context with a couple of pieces of data
+	// see https://github.com/ThalesGroup/crypto11/blob/c73933259cb60509d00f32306eea53d10f8e8f10/crypto11.go#L230
+	instance := libCtx { 
+		ctx: ctx,
+		cfg: &conf,
+	}
+
+	instance.slot, instance.token, err = findToken(slots, conf.TokenSerial, conf.TokenLabel)
+	if err != nil {
+		return nil, nil, err
+	}
+	// in the real world, we might have addition setup to do here - see the link above
+
+	// and below here is a tweaked version of what crypto11.GenerateECDSAKeyPairOnSession/Slot does:
+	// https://github.com/ThalesGroup/crypto11/blob/c73933259cb60509d00f32306eea53d10f8e8f10/ecdsa.go#L234
+	// https://github.com/ThalesGroup/crypto11/blob/c73933259cb60509d00f32306eea53d10f8e8f10/ecdsa.go#L253
+	var k *crypto11.PKCS11PrivateKeyECDSA
+	err = ensureSessions(instance, slots[0])
+	if err != nil {
+		return nil, nil, err
+	}
 }
 
 func testRandReader(ctx *pkcs11.Ctx) ([]byte, error) {
