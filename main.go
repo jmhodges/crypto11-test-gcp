@@ -63,7 +63,7 @@ func main() {
 	case "generate-ecdsa":
 		log.Print("Testing ECDSA generation key on HSM")
 		log.Print("***********************************")
-		priv, pub, err := testGenerateEcdsa(ctx)
+		priv, pub, err := testGenerateEcdsa(ctx, []byte(os.Args[5]))
 		if err != nil {
 			log.Printf("failed to generate ecdsa: %v", err)
 			break
@@ -74,7 +74,7 @@ func main() {
 	case "generate-ecdsa-bypassing-crypto11":
 		log.Print("Testing ECDSA generation key on HSM")
 		log.Print("***********************************")
-		priv, pub, err := testGenerateEcdsaBypassingCrypto11(ctx, conf)
+		priv, pub, err := testGenerateEcdsaBypassingCrypto11(ctx, conf, []byte(os.Args[5]))
 		if err != nil {
 			log.Printf("failed to generate ecdsa: %v", err)
 			break
@@ -103,7 +103,7 @@ func main() {
 	}
 }
 
-func testGenerateEcdsa(ctx *pkcs11.Ctx) (*crypto11.PKCS11PrivateKeyECDSA, *ecdsa.PublicKey, error) {
+func testGenerateEcdsa(ctx *pkcs11.Ctx, keyName []byte) (*crypto11.PKCS11PrivateKeyECDSA, *ecdsa.PublicKey, error) {
 	// basically just https://github.com/mozilla-services/autograph/blob/657f45ca42b7b392378485dd4c731d02037c0c75/signer/signer.go#L422-L438
 	var slots []uint
 	slots, err := ctx.GetSlotList(true)
@@ -113,14 +113,13 @@ func testGenerateEcdsa(ctx *pkcs11.Ctx) (*crypto11.PKCS11PrivateKeyECDSA, *ecdsa
 	if len(slots) < 1 {
 		return nil, nil, fmt.Errorf("no usable slots")
 	}
-	keyNameBytes := []byte("test-ecdsa-key")
 	// welp, the google library doesn't seem to like what crypto11 does
 	// we end up with:
 	// I20240912 16:09:41.182875 132216886245184 logging.cc:185] returning 0xd1 from C_GenerateKeyPair due to status INVALID_ARGUMENT: at session.cc:535: this token does not accept public key attributes [type.googleapis.com/kmsp11.StatusDetails='CK_RV=0xd1']
 	// https://github.com/GoogleCloudPlatform/kms-integrations/issues/1 seems to
 	// be reporting the same thing
 	// google recommends https://github.com/sethvargo/go-gcpkms in that issue
-	priv, err := crypto11.GenerateECDSAKeyPairOnSlot(slots[0], keyNameBytes, keyNameBytes, elliptic.P384())
+	priv, err := crypto11.GenerateECDSAKeyPairOnSlot(slots[0], keyName, keyName, elliptic.P384())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -498,7 +497,7 @@ func GenerateECDSAKeyPairOnSession(session *crypto11.PKCS11Session, slot uint, i
 	return &priv, nil
 }
 
-func testGenerateEcdsaBypassingCrypto11(ctx *pkcs11.Ctx, conf crypto11.PKCS11Config) (*crypto11.PKCS11PrivateKeyECDSA, *ecdsa.PublicKey, error) {
+func testGenerateEcdsaBypassingCrypto11(ctx *pkcs11.Ctx, conf crypto11.PKCS11Config, keyName []byte) (*crypto11.PKCS11PrivateKeyECDSA, *ecdsa.PublicKey, error) {
 	// basically just https://github.com/mozilla-services/autograph/blob/657f45ca42b7b392378485dd4c731d02037c0c75/signer/signer.go#L422-L438
 	var slots []uint
 	slots, err := ctx.GetSlotList(true)
@@ -508,7 +507,6 @@ func testGenerateEcdsaBypassingCrypto11(ctx *pkcs11.Ctx, conf crypto11.PKCS11Con
 	if len(slots) < 1 {
 		return nil, nil, fmt.Errorf("no usable slots")
 	}
-	keyNameBytes := []byte("test-ecdsa-key")
 
 	// TODO: test that using our own context interops OK with the one that crypto11 internally holds
 	// eg: do a series of operations both by hand and through crypto11 to make sure nothing
@@ -535,7 +533,7 @@ func testGenerateEcdsaBypassingCrypto11(ctx *pkcs11.Ctx, conf crypto11.PKCS11Con
 		return nil, nil, err
 	}
 	err = withSession(instance, slots[0], func(session *crypto11.PKCS11Session) error {
-		k, err = GenerateECDSAKeyPairOnSession(session, slots[0], keyNameBytes, keyNameBytes, elliptic.P256())
+		k, err = GenerateECDSAKeyPairOnSession(session, slots[0], keyName, keyName, elliptic.P256())
 		return err
 	})
 	return k, k.PubKey.(*ecdsa.PublicKey), nil
