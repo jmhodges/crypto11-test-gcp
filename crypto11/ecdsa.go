@@ -232,13 +232,65 @@ func GenerateECDSAKeyPair(c elliptic.Curve) (*PKCS11PrivateKeyECDSA, error) {
 // Only a limited set of named elliptic curves are supported. The
 // underlying PKCS#11 implementation may impose further restrictions.
 func GenerateECDSAKeyPairOnSlot(slot uint, id []byte, label []byte, c elliptic.Curve) (*PKCS11PrivateKeyECDSA, error) {
+	var parameters []byte
+	if parameters, err := marshalEcParams(c); err != nil {
+		return nil, err
+	}
+	publicAttributes := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
+		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_ECDSA),
+		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+		pkcs11.NewAttribute(pkcs11.CKA_VERIFY, true),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
+		pkcs11.NewAttribute(pkcs11.CKA_ECDSA_PARAMS, parameters),
+	}
+	privateAttributes := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+		pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
+		pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true),
+		pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, false),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
+	}
+
+	return GenerateECDSAKeyPairOnSlotWithProvidedAttributes(slot, id, label, c, publicAttributes, privateAttributes)
+}
+
+func GenerateECDSAKeyPairOnSession(session *PKCS11Session, slot uint, id []byte, label []byte, c elliptic.Curve) (*PKCS11PrivateKeyECDSA, error) {
+	var parameters []byte
+	if parameters, err := marshalEcParams(c); err != nil {
+		return nil, err
+	}
+	publicAttributes := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
+		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_ECDSA),
+		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+		pkcs11.NewAttribute(pkcs11.CKA_VERIFY, true),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
+		pkcs11.NewAttribute(pkcs11.CKA_ECDSA_PARAMS, parameters),
+	}
+	privateAttributes := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+		pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
+		pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true),
+		pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, false),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
+	}
+
+	return GenerateECDSAKeyPairOnSessionWithProvidedAttributes(session, slot, id, label, c, publicAttributes, privateAttributes)
+}
+
+func GenerateECDSAKeyPairOnSlotWithProvidedAttributes(slot uint, id []byte, label[]byte, c elliptic.Curve, publicAttributes []*pkcs11.Attribute, privateAttributes []*pkcs11.Attribute) (*PKCS11PrivateKeyECDSA, error) {
 	var k *PKCS11PrivateKeyECDSA
 	var err error
 	if err = ensureSessions(instance, slot); err != nil {
 		return nil, err
 	}
 	err = withSession(slot, func(session *PKCS11Session) error {
-		k, err = GenerateECDSAKeyPairOnSession(session, slot, id, label, c)
+		k, err = GenerateECDSAKeyPairOnSessionWithProvidedAttributes(session, slot, id, label, c, publicAttributes, privateAttributes)
 		return err
 	})
 	return k, err
@@ -250,9 +302,8 @@ func GenerateECDSAKeyPairOnSlot(slot uint, id []byte, label []byte, c elliptic.C
 //
 // Only a limited set of named elliptic curves are supported. The
 // underlying PKCS#11 implementation may impose further restrictions.
-func GenerateECDSAKeyPairOnSession(session *PKCS11Session, slot uint, id []byte, label []byte, c elliptic.Curve) (*PKCS11PrivateKeyECDSA, error) {
+func GenerateECDSAKeyPairOnSessionWithProvidedAttributes(session *PKCS11Session, slot uint, id []byte, label []byte, c elliptic.Curve, publicKeyTemplate []*pkcs11.Attribute, privateKeyTemplate []*pkcs11.Attribute) (*PKCS11PrivateKeyECDSA, error) {
 	var err error
-	var parameters []byte
 	var pub crypto.PublicKey
 
 	if label == nil {
@@ -264,26 +315,6 @@ func GenerateECDSAKeyPairOnSession(session *PKCS11Session, slot uint, id []byte,
 		if id, err = generateKeyLabel(); err != nil {
 			return nil, err
 		}
-	}
-	if parameters, err = marshalEcParams(c); err != nil {
-		return nil, err
-	}
-	publicKeyTemplate := []*pkcs11.Attribute{
-		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
-		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_ECDSA),
-		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
-		pkcs11.NewAttribute(pkcs11.CKA_VERIFY, true),
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
-		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
-		pkcs11.NewAttribute(pkcs11.CKA_ECDSA_PARAMS, parameters),
-	}
-	privateKeyTemplate := []*pkcs11.Attribute{
-		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
-		pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
-		pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true),
-		pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, false),
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
-		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
 	}
 	mech := []*pkcs11.Mechanism{pkcs11.NewMechanism(pkcs11.CKM_ECDSA_KEY_PAIR_GEN, nil)}
 	pubHandle, privHandle, err := session.Ctx.GenerateKeyPair(session.Handle,
