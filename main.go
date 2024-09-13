@@ -74,12 +74,13 @@ func main() {
 		hex.Encode(encoded, data)
 		log.Printf("random hex encoded data is: %s", encoded)
 	case "find-keypair":
-		err := testFindKeyPair(ctx)
+		handle, err := testFindKeyPair(ctx, []byte(os.Args[5]))
 		if err != nil {
 			log.Printf("failed to find key pair: %v")
 			break
 		}
 		log.Print("Succeeded!")
+		log.Printf("handle is: %s", handle)
 	}
 }
 
@@ -123,6 +124,16 @@ func testRandReader(ctx *pkcs11.Ctx) ([]byte, error) {
 	return data, nil
 }
 
-func testFindKeyPair(ctx *pkcs11.Ctx) error {
-	return nil
+func testFindKeyPair(ctx *pkcs11.Ctx, label []byte) (uint, error) {
+	key, err := crypto11.FindKeyPair(nil, label)
+	if err != nil {
+		return 0, err
+	}
+	switch key2 := key.(type) {
+	case *crypto11.PKCS11PrivateKeyECDSA:
+		return uint(key2.Handle), nil
+	case *crypto11.PKCS11PrivateKeyRSA:
+		return uint(key2.Handle), nil
+	}
+	return 0, fmt.Errorf("key is not in the HSM; did you specify the label of something that exists in the keyring?")
 }
