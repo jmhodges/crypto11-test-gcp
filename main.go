@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -63,13 +64,22 @@ func main() {
 		log.Printf("privkey is: %v", priv)
 		log.Printf("pubkey is: %v", pub)
 	case "rand-reader":
-		testRandReader(ctx)
+		data, err := testRandReader(ctx)
+		if err != nil {
+			log.Printf("rand reader test failed: %v", err)
+			break
+		}
+		log.Print("Succeeded!")
+		encoded := make([]byte, hex.EncodedLen(len(data)))
+		hex.Encode(encoded, data)
+		log.Printf("random hex encoded data is: %s", encoded)
 	case "find-keypair":
-		testFindKeyPair(ctx)
-	case "all":
-		testGenerateEcdsa(ctx)
-		testRandReader(ctx)
-		testFindKeyPair(ctx)
+		err := testFindKeyPair(ctx)
+		if err != nil {
+			log.Printf("failed to find key pair: %v")
+			break
+		}
+		log.Print("Succeeded!")
 	}
 }
 
@@ -100,8 +110,17 @@ func testGenerateEcdsa(ctx *pkcs11.Ctx) (*crypto11.PKCS11PrivateKeyECDSA, *ecdsa
 	return priv, &pub, nil
 }
 
-func testRandReader(ctx *pkcs11.Ctx) error {
-	return nil
+func testRandReader(ctx *pkcs11.Ctx) ([]byte, error) {
+	rand := new(crypto11.PKCS11RandReader)
+	data := make([]byte, 512)
+	read, err := rand.Read(data)
+	if err != nil {
+		return nil, err
+	}
+	if read != 512 {
+		return nil, fmt.Errorf("failed to read 512 bytes of random data")
+	}
+	return data, nil
 }
 
 func testFindKeyPair(ctx *pkcs11.Ctx) error {
