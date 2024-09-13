@@ -1,6 +1,4 @@
-# github.com/ThalesIgnite/crypto11 v0.1.0
 ## explicit
-github.com/ThalesIgnite/crypto11
 # github.com/golang/glog v1.2.2
 ## explicit; go 1.19
 github.com/golang/glog
@@ -18,3 +16,5 @@ github.com/youtube/vitess/go/sync2
 # golang.org/x/net v0.29.0
 ## explicit; go 1.18
 golang.org/x/net/context
+
+# github.com/ThalesIgnite/crypto11 => ./crypto11
