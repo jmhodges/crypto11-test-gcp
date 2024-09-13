@@ -187,7 +187,7 @@ func newSession(ctx *pkcs11.Ctx, slot uint) (*crypto11.PKCS11Session, error) {
 }
 
 type sessionPool struct {
-	m sync.RWMutex
+	m    sync.RWMutex
 	pool map[uint]*pools.ResourcePool
 }
 
@@ -206,7 +206,6 @@ func (p *sessionPool) PutIfAbsent(slot uint, pool *pools.ResourcePool) error {
 	p.pool[slot] = pool
 	return nil
 }
-
 
 var pool = newSessionPool()
 
@@ -292,8 +291,9 @@ func setupSessions(c *libCtx, slot uint) error {
 }
 
 const labelLength = 64
+
 func generateKeyLabel() ([]byte, error) {
-	rawLabel := make([]byte, labelLength / 2)
+	rawLabel := make([]byte, labelLength/2)
 	var rand crypto11.PKCS11RandReader
 	sz, err := rand.Read(rawLabel)
 	if err != nil {
@@ -442,7 +442,6 @@ func unmarshalEcPoint(b []byte, c elliptic.Curve) (x *big.Int, y *big.Int, err e
 	return
 }
 
-
 func exportECDSAPublicKey(session *crypto11.PKCS11Session, pubHandle pkcs11.ObjectHandle) (crypto.PublicKey, error) {
 	var err error
 	var attributes []*pkcs11.Attribute
@@ -463,7 +462,6 @@ func exportECDSAPublicKey(session *crypto11.PKCS11Session, pubHandle pkcs11.Obje
 	return &pub, nil
 }
 
-
 func GenerateECDSAKeyPairOnSession(session *crypto11.PKCS11Session, slot uint, id []byte, label []byte, c elliptic.Curve) (*crypto11.PKCS11PrivateKeyECDSA, error) {
 	var err error
 	var pub crypto.PublicKey
@@ -478,13 +476,12 @@ func GenerateECDSAKeyPairOnSession(session *crypto11.PKCS11Session, slot uint, i
 			return nil, err
 		}
 	}
-	publicKeyTemplate := []*pkcs11.Attribute{
-	}
+	publicKeyTemplate := []*pkcs11.Attribute{}
 	privateKeyTemplate := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
 		// not provided by pkcs11 - pulled from https://github.com/GoogleCloudPlatform/kms-integrations/blob/4498bffda1e3bfe8750c56ff6f8c0da700152052/kmsp11/kmsp11.h#L30
 		// and https://github.com/GoogleCloudPlatform/kms-integrations/blob/4498bffda1e3bfe8750c56ff6f8c0da700152052/kmsp11/kmsp11.h#L33
-		pkcs11.NewAttribute(0x80000000 | 0x1E100 | 0x01, 12),
+		pkcs11.NewAttribute(0x80000000|0x1E100|0x01, 12),
 	}
 	mech := []*pkcs11.Mechanism{pkcs11.NewMechanism(pkcs11.CKM_ECDSA_KEY_PAIR_GEN, nil)}
 	pubHandle, privHandle, err := session.Ctx.GenerateKeyPair(session.Handle,
@@ -518,7 +515,7 @@ func testGenerateEcdsaBypassingCrypto11(ctx *pkcs11.Ctx, conf crypto11.PKCS11Con
 	// breaks
 	// we need an `instance` object to which is just a Context with a couple of pieces of data
 	// see https://github.com/ThalesGroup/crypto11/blob/c73933259cb60509d00f32306eea53d10f8e8f10/crypto11.go#L230
-	instance := libCtx { 
+	instance := libCtx{
 		ctx: ctx,
 		cfg: &conf,
 	}
